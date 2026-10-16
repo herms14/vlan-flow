@@ -1,20 +1,22 @@
 # VLAN Flow
 
-**See which traffic your TP-Link Omada firewall rules allow and block between your networks, live, as a map.**
+**See which traffic your firewall allows and blocks between your networks, live, as a map.**
 
-VLAN Flow listens for the syslog messages an Omada gateway sends when a Gateway ACL rule with
-logging matches a connection. It draws every *allowed* and *denied* path between your VLANs on an
+VLAN Flow listens for the syslog messages your router or firewall sends when a rule with logging
+matches a connection. It draws every *allowed* and *denied* path between your VLANs on an
 interactive map, lets you look up a single connection ("was 192.168.10.5 → 192.168.20.8 port 22
-blocked?"), and shows the rest of the controller's activity (clients joining, DHCP leases, device events).
+blocked?"), and shows everything else your devices log (clients joining, DHCP leases, device events).
 
 - **One small Python program.** Standard library only: nothing to `pip install`, no database server.
 - **Runs anywhere Python 3.9+ or Docker runs**: a Raspberry Pi, a VM, an LXC container.
-- **Read-only.** It never talks to your controller or changes your network; it only receives syslog.
+- **Works with most routers and firewalls**: key=value logs, Linux netfilter (OpenWrt, UniFi, ufw),
+  pf filterlog (pfSense, OPNsense) and MikroTik. See [supported formats](docs/router-setup.md#supported-log-formats).
+- **Read-only.** It never logs in to your router or changes your network; it only receives syslog.
 - **Your networks, your names.** Everything about your environment lives in one `config.json`.
 
 > [!NOTE]
-> VLAN Flow shows **logged ACL decisions**, not every packet. A path appears only when a Gateway ACL
-> rule with **Logging** turned on matches it. A permit means the firewall allowed it, not that the
+> VLAN Flow shows **logged firewall decisions**, not every packet. A path appears only when a
+> firewall rule with **logging** turned on matches it. A permit means the firewall allowed it, not that the
 > application answered. "No evidence" never means "blocked".
 
 ---
@@ -22,9 +24,9 @@ blocked?"), and shows the rest of the controller's activity (clients joining, DH
 ## How it works
 
 ```
- Omada gateway / controller ── syslog (UDP 5514) ──►  VLAN Flow  ──►  Dashboard (http://server:8787)
-   "[ACL] ACTION=Deny SRC=… DST=…"                    • keeps 7 days of ACL decisions (SQLite)
-                                                      • maps each IP to your networks (config.json)
+ Router / firewall ── syslog (UDP 5514) ──►  VLAN Flow  ──►  Dashboard (http://server:8787)
+   "action=deny src=… dst=… dport=22"        • keeps 7 days of firewall decisions (SQLite)
+                                             • maps each IP to your networks (config.json)
 ```
 
 ---
@@ -53,7 +55,7 @@ Change three things (details in [docs/configuration.md](docs/configuration.md)):
 | Setting | What to put there |
 |---|---|
 | `networks` | One line per VLAN: an ID, a name and its subnet, e.g. `{ "id": 30, "name": "IoT", "subnet": "192.168.30.0/24" }` |
-| `senders` | The IP addresses your syslog will come from: your gateway, and your controller if it logs too. Anything else is ignored. |
+| `senders` | The IP addresses your syslog will come from, usually your router. Anything else is ignored. |
 | `allowed_hosts` | The address you will type in the browser, e.g. `"192.168.20.50:8787"` or `"vlanflow.example.com"` |
 
 ### 3. Start it
@@ -73,18 +75,18 @@ sudo nano /etc/vlan-flow/config.json    # the installer copies the example here 
 sudo systemctl restart vlan-flow
 ```
 
-### 4. Point Omada at it
+### 4. Point your router at it
 
-In the Omada controller, send syslog to **this server's IP, UDP port 5514**, and turn on **Logging**
-for the Gateway ACL rules you want to see. Step-by-step with screenshots-in-words:
-[docs/omada-setup.md](docs/omada-setup.md).
+In your router or firewall, send syslog to **this server's IP, UDP port 5514**, and turn on
+**logging** for the firewall rules you want to see. Step-by-step, with examples for common
+platforms: [docs/router-setup.md](docs/router-setup.md).
 
 ### 5. Open the dashboard
 
 Browse to `http://<server-ip>:8787`. Within a few seconds the **Network activity** table at the
-bottom shows incoming syslog; the map fills as logged ACL rules match traffic.
+bottom shows incoming syslog; the map fills as logged firewall rules match traffic.
 
-No ACL rules yet? Click **Explore demo** to see how it looks with synthetic data based on your own
+No logging rules yet? Click **Explore demo** to see how it looks with synthetic data based on your own
 networks.
 
 ---
@@ -95,9 +97,9 @@ networks.
 |---|---|
 | **Traffic explorer** (map) | One card per network. Green arrows = allowed, red = denied. Click an arrow or a card for details; drag cards to rearrange; scroll to zoom. |
 | **Connection troubleshoot** | Enter source IP, destination IP and port to search the logs for that exact connection: allowed, denied, mixed or no evidence. It does not send any packets. |
-| **Connection decisions** | The raw ACL events behind the map. Click a row to inspect it, or **Export CSV**. |
-| **Network activity** | Every syslog message received (last 300, memory only): ACL, client, DHCP, device and other events. |
-| **Collector health** | Messages received, ACL events parsed, rejected senders. If "Rejected" grows, add that IP to `senders`. |
+| **Connection decisions** | The raw firewall events behind the map. Click a row to inspect it, or **Export CSV**. |
+| **Network activity** | Every syslog message received (last 300, memory only): firewall, client, DHCP, device and other events. |
+| **Collector health** | Messages received, firewall events parsed, rejected senders. If "Rejected" grows, add that IP to `senders`. |
 
 ---
 
@@ -117,7 +119,7 @@ networks.
 
 | Guide | |
 |---|---|
-| [Omada setup](docs/omada-setup.md) | Send syslog to VLAN Flow and enable ACL logging |
+| [Router setup](docs/router-setup.md) | Supported log formats, sending syslog, enabling rule logging |
 | [Configuration](docs/configuration.md) | Every `config.json` setting, ports and environment variables |
 | [Reverse proxy & login](docs/reverse-proxy.md) | HTTPS and authentication with Caddy, nginx or Traefik |
 | [Troubleshooting](docs/troubleshooting.md) | Nothing shows up, rejected senders, wrong networks, Docker notes |

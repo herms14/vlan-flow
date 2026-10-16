@@ -14,12 +14,12 @@
     { "id": 90, "name": "Management", "role": "Network control",  "subnet": "192.168.90.0/24" }
   ],
 
-  "_senders": "IP addresses allowed to send syslog. Usually your Omada gateway's LAN IP and the controller's IP.",
+  "_senders": "IP addresses allowed to send syslog: your router/firewall, plus any controller or other device that logs to VLAN Flow.",
   "senders": ["192.168.0.1", "192.168.0.2"],
 
   "sender_labels": {
-    "192.168.0.1": "Gateway",
-    "192.168.0.2": "Omada controller"
+    "192.168.0.1": "Router",
+    "192.168.0.2": "Controller"
   },
 
   "_allowed_hosts": "Host names (with :port when not 80/443) you open the dashboard with. Use [\"*\"] to accept any.",

@@ -1,5 +1,5 @@
 [Unit]
-Description=VLAN Flow - Omada ACL syslog collector and dashboard
+Description=VLAN Flow - firewall syslog collector and dashboard
 Documentation=https://github.com/herms14/vlan-flow
 After=network-online.target
 Wants=network-online.target

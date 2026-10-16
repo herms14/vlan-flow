@@ -1,4 +1,4 @@
-"""VLAN Flow: collect TP-Link Omada syslog and map logged ACL decisions between networks.
+"""VLAN Flow: collect firewall syslog and map logged allow/deny decisions between networks.
 
 Python 3.9+ standard library only. See README.md for setup.
 """
@@ -18,9 +18,10 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
-FIELDS = re.compile(r'\b(ACTION|SRC|DST|PROTO|SPORT|DPORT|DESC|SRC_MAC|DST_MAC)=([^,\s]+)', re.I)
-# Syslog framing: "<PRI>1 TIMESTAMP HOST APP - - - MSG" (RFC 5424, controller) or "<PRI>Mon DD HH:MM:SS HOST: MSG" (gateway).
-HEADER = re.compile(r'^<\d{1,3}>(?:1 .{1,120}? - - - |[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \S+: )')
+# Syslog framing: RFC 5424 "<PRI>1 TIMESTAMP HOST APP PROCID MSGID SD MSG" (some devices put spaces in
+# TIMESTAMP/HOST, hence the first form) or RFC 3164 "<PRI>Mon DD HH:MM:SS HOST: MSG".
+HEADER = re.compile(r'^<\d{1,3}>(?:1 .{1,120}? - - - |1 \S+ \S+ \S+ \S+ \S+ (?:-|\[[^\]]*\]) |'
+                    r'[A-Z][a-z]{2} [ \d]\d \d\d:\d\d:\d\d \S+: )')
 RECENT_LIMIT = 300
 DEFAULTS = {'title': 'VLAN Flow', 'site_name': 'My network', 'timezone': '', 'networks': [],
             'senders': [], 'sender_labels': {}, 'allowed_hosts': [], 'retention_days': 7,
@@ -63,7 +64,7 @@ def load_config(path):
         except ValueError:
             raise ConfigError(f'"senders" entry {sender!r} is not an IP address.')
     if not config['senders']:
-        raise ConfigError('Add your gateway and/or controller IP to "senders"; syslog from anything else is ignored.')
+        raise ConfigError('Add your router/firewall IP to "senders"; syslog from anything else is ignored.')
     config['networks'] = networks
     config['retention_days'] = max(1, int(config['retention_days']))
     config['max_events'] = max(1000, int(config['max_events']))
@@ -86,15 +87,15 @@ class NetworkMap:
 
 
 def classify(line):
-    """Label every received message so non-ACL syslog stays visible instead of silently counted."""
-    upper = line.upper()
-    if '[ACL]' in upper:
+    """Label every received message so non-firewall syslog stays visible instead of silently counted."""
+    if extract(line):
         return 'acl'
+    upper = line.upper()
     if 'DHCP' in upper:
         return 'dhcp'
-    if '[CLIENT:' in upper:
+    if '[CLIENT:' in upper or re.search(r'\b(ASSOCIATED|DISASSOCIATED|WENT ONLINE|WENT OFFLINE|CONNECTED TO|DISCONNECTED FROM)\b', upper):
         return 'client'
-    if '[SWITCH:' in upper or '[AP:' in upper or '[GATEWAY:' in upper or 'ADOPT' in upper:
+    if re.search(r'\[(SWITCH|AP|GATEWAY):|\bADOPT|\bLINK (UP|DOWN)\b|\bPORT \S+ (UP|DOWN)\b', upper):
         return 'device'
     return 'system'
 
@@ -104,30 +105,144 @@ def summary(line):
     return re.sub(r'\s+', ' ', text)[:400]
 
 
+# ---------------------------------------------------------------------------
+# Firewall log formats. Each parser returns a dict with action/src/dst/proto/sport/dport/rule
+# or None. A line only counts as a decision when it states allow or deny explicitly.
+# ---------------------------------------------------------------------------
+
+ALLOW_WORDS = {'allow', 'allowed', 'accept', 'accepted', 'pass', 'passed', 'permit', 'permitted'}
+DENY_WORDS = {'deny', 'denied', 'drop', 'dropped', 'block', 'blocked', 'reject', 'rejected'}
+PROTOCOLS = {'6': 'TCP', '17': 'UDP', '1': 'ICMP', '58': 'ICMPV6'}
+KV = re.compile(r'(?<![\w.-])([A-Za-z_][\w.-]*)=("[^"]*"|[^,\s]*)')
+ALIASES = {
+    'action': ('action', 'act', 'log_subtype', 'disposition', 'verdict'),
+    'src': ('src', 'srcip', 'src_ip', 'source', 'sourceip', 'source_ip', 'saddr'),
+    'dst': ('dst', 'dstip', 'dst_ip', 'destination', 'destip', 'dest_ip', 'daddr'),
+    'sport': ('sport', 'srcport', 'src_port', 'spt', 'sourceport', 'source_port'),
+    'dport': ('dport', 'dstport', 'dst_port', 'dpt', 'destport', 'dest_port'),
+    'proto': ('proto', 'protocol', 'ip_protocol'),
+    'rule': ('desc', 'rule', 'rule_id', 'ruleid', 'rule_name', 'rulename', 'policyid', 'policy_id',
+             'policyname', 'policy', 'fw_rule_id'),
+}
+
+
+def word_action(text):
+    """allow/deny from a log prefix or rule name, e.g. '[DROP]', 'BLOCK-GUEST', UniFi '...-2000-D'."""
+    words = set(re.findall(r'[a-z]+', text.lower()))
+    if words & DENY_WORDS:
+        return 'deny'
+    if words & ALLOW_WORDS:
+        return 'allow'
+    suffix = re.search(r'-([ADR])\]?\s*$', text.strip())
+    if suffix:
+        return 'allow' if suffix.group(1) == 'A' else 'deny'
+    return None
+
+
+def decision(action, src, dst, proto='', sport=None, dport=None, rule=''):
+    try:
+        src, dst = str(ipaddress.ip_address(src)), str(ipaddress.ip_address(dst))
+        ports = [int(p) if p not in (None, '') else None for p in (sport, dport)]
+    except (TypeError, ValueError):
+        return None
+    if any(p is not None and not 0 <= p <= 65535 for p in ports):
+        return None
+    proto = str(proto or '?').upper()
+    return dict(action=action, src=src, dst=dst, proto=PROTOCOLS.get(proto, proto)[:16],
+                sport=ports[0], dport=ports[1], rule=str(rule)[:128])
+
+
+def parse_keyvalue(text):
+    """key=value logs (many routers and firewalls), e.g. 'action=deny srcip=… dstip=… dstport=22'."""
+    raw = {k.lower(): v.strip('"') for k, v in KV.findall(text)}
+    fields = {name: next((raw[k] for k in keys if raw.get(k)), None) for name, keys in ALIASES.items()}
+    if not fields['action'] or not fields['src'] or not fields['dst']:
+        return None
+    action = fields['action'].lower()
+    action = 'allow' if action in ALLOW_WORDS else 'deny' if action in DENY_WORDS else None
+    if not action:
+        return None
+    return decision(action, fields['src'], fields['dst'], fields['proto'], fields['sport'], fields['dport'],
+                    fields['rule'] or '')
+
+
+def parse_netfilter(text):
+    """Linux netfilter/iptables LOG lines (OpenWrt, UniFi, ufw, firewalld): '<prefix> IN=… SRC=… DST=… DPT=…'."""
+    match = re.search(r'(.*?)\bIN=\S*\s+OUT=', text)
+    if not match or 'SRC=' not in text:
+        return None
+    raw = dict(KV.findall(text))
+    # Keep only the rule's log prefix: drop "host kernel:", "program:" and the "[ 1234.567]" uptime stamp.
+    parts = [p for p in re.split(r'kernel:\s*|:\s', match.group(1)) if p.strip()]
+    prefix = parts[-1] if parts else ''
+    prefix = re.sub(r'\[\s*\d+\.\d+\]\s*', '', prefix).strip()
+    action = word_action(prefix)
+    if not action:
+        return None
+    return decision(action, raw.get('SRC'), raw.get('DST'), raw.get('PROTO'), raw.get('SPT'), raw.get('DPT'),
+                    prefix.strip('[] '))
+
+
+def parse_filterlog(text):
+    """pf filterlog CSV (pfSense, OPNsense)."""
+    # With an RFC 5424 header the "filterlog" tag is stripped and the CSV starts the message.
+    match = (re.search(r'filterlog(?:\[\d+\])?:\s*(\S+)', text)
+             or re.match(r'(\d*,[^,]*,[^,]*,[^,]*,[^,]+,\w+,(?:pass|block|reject),(?:in|out),[46],\S*)', text))
+    if not match:
+        return None
+    f = match.group(1).split(',')
+    try:
+        action = {'pass': 'allow', 'block': 'deny', 'reject': 'deny'}.get(f[6])
+        if not action:
+            return None
+        if f[8] == '4':
+            proto, src, dst, rest = f[16], f[18], f[19], f[20:]
+        elif f[8] == '6':
+            proto, src, dst, rest = f[12], f[15], f[16], f[17:]
+        else:
+            return None
+    except IndexError:
+        return None
+    ports = rest[:2] if proto.lower() in ('tcp', 'udp') and len(rest) >= 2 else (None, None)
+    return decision(action, src, dst, proto, ports[0], ports[1], f[3] or f[0])
+
+
+def parse_mikrotik(text):
+    """MikroTik firewall log: '<prefix> forward: in:… proto TCP (SYN), 10.0.0.5:51234->10.0.1.9:22, len 60'.
+    The action comes from the rule's log prefix, so give logging rules a prefix such as DROP or ALLOW."""
+    match = re.search(r'(?:^|\s)(\S[^:]*?)?\s*(?:forward|input|output|prerouting|postrouting):\s.*?'
+                      r'proto (\w+)(?: \([^)]*\))?, \[?([\w.:]+?)\]?(?::(\d+))?->\[?([\w.:]+?)\]?(?::(\d+))?,', text)
+    if not match:
+        return None
+    prefix = match.group(1) or ''
+    action = word_action(prefix)
+    if not action:
+        return None
+    return decision(action, match.group(3), match.group(5), match.group(2), match.group(4), match.group(6),
+                    prefix.strip())
+
+
+PARSERS = (parse_filterlog, parse_netfilter, parse_mikrotik, parse_keyvalue)
+
+
+def extract(line):
+    text = HEADER.sub('', line.strip(), count=1)
+    for parser in PARSERS:
+        event = parser(text)
+        if event:
+            event['format'] = parser.__name__[6:]
+            return event
+    return None
+
+
 def parse_event(line, networks):
     # Do not infer decisions from timeouts, byte counters or unrelated syslog.
-    fields = {k.upper(): v for k, v in FIELDS.findall(line)}
-    action = fields.get('ACTION', '').lower()
-    actions = {'allow': 'allow', 'permit': 'allow', 'accept': 'allow',
-               'deny': 'deny', 'drop': 'deny', 'block': 'deny'}
-    if '[ACL]' not in line.upper() or action not in actions:
-        return None
-    try:
-        src, dst = str(ipaddress.ip_address(fields['SRC'])), str(ipaddress.ip_address(fields['DST']))
-        ports = []
-        for key in ('SPORT', 'DPORT'):
-            value = fields.get(key)
-            port = int(value) if value is not None else None
-            if port is not None and not 0 <= port <= 65535:
-                return None
-            ports.append(port)
-    except (KeyError, ValueError):
+    event = extract(line)
+    if event is None:
         return None
     stamp = re.search(r'\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?', line)
-    proto = fields.get('PROTO', '?').upper()
-    return dict(action=actions[action], src=src, dst=dst, svlan=networks.lookup(src), dvlan=networks.lookup(dst),
-                proto={'6': 'TCP', '17': 'UDP', '1': 'ICMP', '58': 'ICMPV6'}.get(proto, proto)[:16],
-                sport=ports[0], dport=ports[1], rule=fields.get('DESC', '')[:128],
+    event.pop('format')
+    return dict(event, svlan=networks.lookup(event['src']), dvlan=networks.lookup(event['dst']),
                 device_time=stamp.group(0) if stamp else '')
 
 
@@ -141,7 +256,7 @@ class Store:
         self.lock = threading.Lock()
         self.health = dict(started=time.time(), received=0, parsed=0, unparsed=0,
                            rejected=0, errors=0, last_received=None, last_event=None)
-        # Recent raw messages are memory-only diagnostics; only explicit ACL decisions are persisted.
+        # Recent raw messages are memory-only diagnostics; only explicit firewall decisions are persisted.
         self.recent = deque(maxlen=RECENT_LIMIT)
         self.kinds = Counter()
         with self.connect() as db:
@@ -333,7 +448,7 @@ def run(args):
 
 def main():
     env = os.environ.get
-    parser = argparse.ArgumentParser(description='VLAN Flow: Omada ACL syslog collector and dashboard')
+    parser = argparse.ArgumentParser(description='VLAN Flow: firewall syslog collector and dashboard')
     parser.add_argument('--config', type=Path, default=Path(env('VLANFLOW_CONFIG', 'config.json')),
                         help='Path to config.json (env VLANFLOW_CONFIG)')
     parser.add_argument('--db', type=Path, default=Path(env('VLANFLOW_DB', 'data/events.sqlite3')),

@@ -50,7 +50,7 @@ One entry per VLAN or subnet you want on the map.
 ### `senders` (required)
 
 The IP addresses allowed to send syslog. Messages from anywhere else are counted as *rejected* and
-dropped. See [omada-setup.md](omada-setup.md#which-ip-will-the-messages-come-from).
+dropped. See [router-setup.md](router-setup.md#which-ip-will-the-messages-come-from).
 
 ```json
 "senders": ["192.168.20.1", "192.168.0.2"]
@@ -61,7 +61,7 @@ dropped. See [omada-setup.md](omada-setup.md#which-ip-will-the-messages-come-fro
 Friendly names for senders in the **Network activity** table.
 
 ```json
-"sender_labels": { "192.168.20.1": "Gateway", "192.168.0.2": "Omada controller" }
+"sender_labels": { "192.168.20.1": "Router", "192.168.0.2": "Controller" }
 ```
 
 ### `allowed_hosts`
@@ -84,8 +84,8 @@ The addresses you open the dashboard with. Requests using any other `Host` heade
 | `title` | `"VLAN Flow"` | Browser tab title. |
 | `site_name` | `"My network"` | Shown above the logo. |
 | `timezone` | `""` (browser time) | IANA time zone for the header clock, e.g. `"Europe/Berlin"`. |
-| `retention_days` | `7` | How long ACL events are kept. |
-| `max_events` | `100000` | Maximum ACL events kept; the oldest are deleted first. |
+| `retention_days` | `7` | How long firewall events are kept. |
+| `max_events` | `100000` | Maximum firewall events kept; the oldest are deleted first. |
 
 ---
 

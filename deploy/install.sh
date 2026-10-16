@@ -62,7 +62,7 @@ echo "  Config    : $CONF_DIR/config.json   (then: sudo systemctl restart vlan-f
 echo "  Logs      : journalctl -u vlan-flow -f"
 if [ "$first_install" = yes ]; then
   echo
-  echo "  Next: edit $CONF_DIR/config.json with your own networks, gateway/controller IPs and"
-  echo "  dashboard address, restart the service, then point Omada syslog at this server."
-  echo "  Step-by-step guide: docs/omada-setup.md"
+  echo "  Next: edit $CONF_DIR/config.json with your own networks, router IP(s) and"
+  echo "  dashboard address, restart the service, then send your firewall syslog to this server."
+  echo "  Step-by-step guide: docs/router-setup.md"
 fi

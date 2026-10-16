@@ -20,14 +20,14 @@ single quotes instead of double quotes.
 You opened the dashboard with an address that is not in `allowed_hosts`. Add exactly the text shown
 in the message (including `:8787` if it is there) and restart.
 
-### Status says "Waiting for Omada syslog", Messages stays at 0
+### Status says "Waiting for syslog", Messages stays at 0
 
 Nothing is arriving. Check, in order:
 
-1. Remote logging in Omada points at the right IP and **port 5514**
-   ([omada-setup.md](omada-setup.md)).
+1. Remote logging on your router points at the right IP, **UDP port 5514**
+   ([router-setup.md](router-setup.md)).
 2. The packets reach the server: `sudo tcpdump -ni any udp port 5514`.
-   - Nothing in tcpdump: a firewall (the server's, or your own inter-VLAN ACLs) blocks UDP 5514.
+   - Nothing in tcpdump: a firewall (the server's, or your own inter-VLAN firewall rules) blocks UDP 5514.
    - Packets in tcpdump but still 0 in the dashboard: see the next item.
 3. VLAN Flow listens where you think: the startup log line shows the syslog address and port.
 
@@ -38,10 +38,14 @@ Syslog arrives from an IP that is not in `senders`. Find the source IP in tcpdum
 
 ### Messages arrive but the map stays empty
 
-- The **Network activity** table shows client/DHCP/device events but no `ACL` rows: no Gateway ACL
-  rule with **Logging** enabled has matched yet. Turn on Logging for at least one rule and generate
+- The **Network activity** table shows client/DHCP/device events but no `FIREWALL` rows: no rule
+  with **logging** enabled has matched yet. Turn on logging for at least one rule and generate
   matching traffic.
-- ACL rows exist but no arrows: the IPs do not fall inside any `networks` subnet (they show as
+- Firewall lines arrive but are listed as `OTHER`: the line has no allow/deny word. On netfilter
+  (OpenWrt, UniFi, iptables) and MikroTik, give the rule a **log prefix** such as `DROP-GUEST`
+  ([router-setup.md](router-setup.md#supported-log-formats)). Other format? Open an issue with an
+  example line.
+- `FIREWALL` rows exist but no arrows: the IPs do not fall inside any `networks` subnet (they show as
   `External/?` in the table), or the source and destination are in the same network. Check your
   subnets in `config.json`.
 - The time window (top left) is too short. Try **Last 24 hours**.

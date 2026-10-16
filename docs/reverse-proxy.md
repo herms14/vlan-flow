@@ -8,7 +8,7 @@ In every example:
 - VLAN Flow runs at `192.168.20.50:8787`. Replace it with your server.
 - The public name is `vlanflow.example.com`. Add that name to `allowed_hosts` in `config.json`.
 - Restrict port 8787 on the VLAN Flow server to the proxy's IP (see the firewall section of
-  [omada-setup.md](omada-setup.md#firewall-on-the-vlan-flow-server)).
+  [router-setup.md](router-setup.md#firewall-on-the-vlan-flow-server)).
 
 ---
 
