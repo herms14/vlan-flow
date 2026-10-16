@@ -1,0 +1,30 @@
+{
+  "_readme": "Copy this file to config.json and edit it. Keys starting with _ are comments. See docs/configuration.md.",
+
+  "title": "VLAN Flow",
+  "site_name": "Home network",
+  "timezone": "",
+
+  "networks": [
+    { "id": 1,  "name": "Default",    "role": "Default network",  "subnet": "192.168.0.0/24" },
+    { "id": 10, "name": "Trusted",    "role": "Trusted clients",  "subnet": "192.168.10.0/24" },
+    { "id": 20, "name": "Servers",    "role": "Compute & storage", "subnet": "192.168.20.0/24" },
+    { "id": 30, "name": "IoT",        "role": "Smart devices",    "subnet": "192.168.30.0/24" },
+    { "id": 50, "name": "Guest",      "role": "Untrusted clients", "subnet": "192.168.50.0/24" },
+    { "id": 90, "name": "Management", "role": "Network control",  "subnet": "192.168.90.0/24" }
+  ],
+
+  "_senders": "IP addresses allowed to send syslog. Usually your Omada gateway's LAN IP and the controller's IP.",
+  "senders": ["192.168.0.1", "192.168.0.2"],
+
+  "sender_labels": {
+    "192.168.0.1": "Gateway",
+    "192.168.0.2": "Omada controller"
+  },
+
+  "_allowed_hosts": "Host names (with :port when not 80/443) you open the dashboard with. Use [\"*\"] to accept any.",
+  "allowed_hosts": ["vlanflow.example.com", "192.168.20.50:8787"],
+
+  "retention_days": 7,
+  "max_events": 100000
+}

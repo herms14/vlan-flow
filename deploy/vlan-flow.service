@@ -1,0 +1,36 @@
+[Unit]
+Description=VLAN Flow - Omada ACL syslog collector and dashboard
+Documentation=https://github.com/herms14/vlan-flow
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Ports and bind addresses; override them in /etc/vlan-flow/vlan-flow.env (see docs/configuration.md).
+Environment=VLANFLOW_HTTP_BIND=0.0.0.0
+Environment=VLANFLOW_PORT=8787
+Environment=VLANFLOW_SYSLOG_BIND=0.0.0.0
+Environment=VLANFLOW_SYSLOG_PORT=5514
+EnvironmentFile=-/etc/vlan-flow/vlan-flow.env
+ExecStart=/usr/bin/python3 /opt/vlan-flow/server.py --config /etc/vlan-flow/config.json --db /var/lib/vlan-flow/events.sqlite3
+Restart=on-failure
+RestartSec=3
+
+# Runs as a throwaway system user with no access to the rest of the machine.
+DynamicUser=yes
+StateDirectory=vlan-flow
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=256M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

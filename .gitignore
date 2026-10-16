@@ -1,0 +1,11 @@
+# Your local configuration and data
+config.json
+data/
+*.sqlite3
+*.sqlite3-*
+*.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/

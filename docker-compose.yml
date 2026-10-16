@@ -1,0 +1,18 @@
+services:
+  vlan-flow:
+    build: .
+    image: vlan-flow:local
+    container_name: vlan-flow
+    restart: unless-stopped
+    # Host networking keeps the real source IP of each syslog packet, which VLAN Flow
+    # checks against "senders". (Linux only; see docs/troubleshooting.md for other hosts.)
+    network_mode: host
+    environment:
+      VLANFLOW_PORT: "8787"
+      VLANFLOW_SYSLOG_PORT: "5514"
+    volumes:
+      - ./config.json:/config/config.json:ro
+      - vlan-flow-data:/data
+
+volumes:
+  vlan-flow-data:
